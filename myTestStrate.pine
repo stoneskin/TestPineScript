@@ -42,15 +42,18 @@ getTrend(mf,mm,ml)=>
     //upper trend, ma meddle > ma slow return 1
     //down trend, -f
     //no clear trend return 0
-    ((mm-ml)> (ml*0.05))?1:((ml-mm)> (ml*0.05))?-1:0
+    //((mm-ml)> (ml*0.05))?1:((ml-mm)> (ml*0.05))?-1:0
+    v=(mm-ml)/ml
+    re=v>0.01?1:0
+    v<-0.01?-1:re
         
 
 // get trend     
 trend=getTrend(maFast,maMiddle,maSlow)
-
+trendColor=color(na)
 //****************************
 if(trend>0)  //upper trend,bull
-
+    trendColor:=color.new(color.green, 90)
 
     if(ta.crossover(price,maMiddle))
         action:=50
@@ -60,15 +63,20 @@ if(trend>0)  //upper trend,bull
         action:=-50
         actionColor:=color.red
         //strategy.entry("sell", strategy.short, comment="sell")
+else if(trend<0)
+    trendColor:=color.new(color.red, 90)
 else
     action:=0
-    
+
+
+
 if (action>10)
     strategy.entry("Buy", strategy.long, comment="buy")
     actionline:=price+action
     
 else if (action<-10)
-    strategy.entry("sell", strategy.short, comment="sell")
+    stopVal=price*0.97   
+    strategy.exit("exit at" ,"Buy",stop=stopVal, limit=price*2)
     actionline:=price+action
     
 
@@ -76,7 +84,7 @@ else if (action<-10)
     
 //if(trend<0) //down trend, bear
     //todo
-    
+bgcolor(trendColor)   
 plot(actionline, "actionline", actionColor)
 //plot(strategy.equity, title="equity", color=color.white, linewidth=2, style=plot.style_areabr)
 plot(maSlow, title="EMASlow", color=color.blue, offset=0)
