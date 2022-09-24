@@ -1,0 +1,85 @@
+//@version=5
+strategy("My Test Strategy", overlay=true)
+
+fastLength = input(7)
+middleLength = input( 21 )
+slowLength = input(55)
+price = close
+action=0
+var actionline=price
+
+//RSI
+overSold = input( 30 )
+overBought = input( 70 )
+
+vrsi = ta.rsi(price, middleLength)
+co = ta.crossover(vrsi, overSold)
+cu = ta.crossunder(vrsi, overBought)
+
+// if (not na(vrsi))
+// 	if (co)
+// 	    action:=50
+		
+// 	if (cu)
+// 	    action:=-50
+	
+
+//MACD
+maFast = ta.sma(price, fastLength)
+maSlow = ta.sma(price, slowLength)
+maMiddle = ta.sma(price, middleLength)
+var actionColor=color.blue
+
+
+
+//if(maFast>maMiddle) and (maMiddle>maSlow)
+    //action+=1
+//if（maFast<maMiddle) and (maMiddle<maSlow)
+    //action+=1
+
+//uptrendL maMiddle >maSlow
+getTrend(mf,mm,ml)=>
+    //upper trend, ma meddle > ma slow return 1
+    //down trend, -f
+    //no clear trend return 0
+    ((mm-ml)> (ml*0.05))?1:((ml-mm)> (ml*0.05))?-1:0
+        
+
+// get trend     
+trend=getTrend(maFast,maMiddle,maSlow)
+
+//****************************
+if(trend>0)  //upper trend,bull
+
+
+    if(ta.crossover(price,maMiddle))
+        action:=50
+        actionColor:=color.green
+        //strategy.entry("Buy", strategy.long, comment="buy")
+    if(ta.crossunder(price,maMiddle))
+        action:=-50
+        actionColor:=color.red
+        //strategy.entry("sell", strategy.short, comment="sell")
+else
+    action:=0
+    
+if (action>10)
+    strategy.entry("Buy", strategy.long, comment="buy")
+    actionline:=price+action
+    
+else if (action<-10)
+    strategy.entry("sell", strategy.short, comment="sell")
+    actionline:=price+action
+    
+
+
+    
+//if(trend<0) //down trend, bear
+    //todo
+    
+plot(actionline, "actionline", actionColor)
+//plot(strategy.equity, title="equity", color=color.white, linewidth=2, style=plot.style_areabr)
+plot(maSlow, title="EMASlow", color=color.blue, offset=0)
+plot(maFast, title="EMAFast", color=color.orange, offset=0)
+plot(maMiddle, title="EMAMiddle", color=color.purple, offset=0)
+
