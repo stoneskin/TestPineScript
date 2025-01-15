@@ -1,0 +1,407 @@
+//@version=5
+//v37 use Bollinger band and RSI cross 0 as entry 
+//v48 add fix percentage and atr stop loss
+//v56 add stop profit and Sar stop profit
+//v67 add bullbeartrend status
+//v75 update input default and message
+//v84 update and clean up strategy1
+//v109 update strategy2
+//todo, add trend stratege
+strategy("My Bollinger + RSI Strategy", overlay=true,initial_capital = 10000,default_qty_type = strategy.cash,default_qty_value = 5000,process_orders_on_close = true)
+veryFastLength=input(5,title = "Very Fast ema Length",group = "Trend")
+fastLength=input(12,title = "Fast ema Length",group = "Trend")
+
+slowLength=input(89,title="BullBear slow ma Length",group = "Trend")
+bool showAdditionMA=input(true,"show SlowMa",group = "Trend")
+slowMaLength1=input(144,"Slow MA1",group = "Trend")
+verySlowMaMultiple=input(8,"Very Slow MA1*x",group = "Trend")
+
+Length = input( 16,title = "Bollinger Length *",group = "Bollinger Channel" )  
+priceMax = high//input(high,group = "Bollinger Channel")
+priceMin = low//input(low,group = "Bollinger Channel")
+price = input(hl2,"Price",group = "Bollinger Channel")
+
+float bandWith=input.float(defval =  1.8, title = "multiple *",minval=0.001, maxval=50 ,group = "Bollinger Channel" ) 
+bool useStDev=input.bool(defval = true,  tooltip = "if use Standard deviation or use max, min price" ,group = "Bollinger Channel") 
+
+
+
+//Bolling EMA
+maMax = ta.ema(priceMax, Length)
+maMin = ta.ema(priceMin, Length)
+ma = ta.ema(price, Length)
+
+// //Standard deviation or max/min
+dev=useStDev? ta.stdev(price, Length):(maMax-maMin)
+dev2H=ta.stdev(high,Length)
+dev2L=ta.stdev(low,Length)
+upper=(useStDev?ma:maMax)+ bandWith*dev
+lower=(useStDev?ma:maMin)- bandWith*dev
+// upper2=(useStDev?ma:maMax)+ bandWith*dev2H
+// lower2=(useStDev?ma:maMin)- bandWith*dev2L
+
+
+//EMA
+slowMax=ta.sma(priceMax,slowLength)
+slowMin=ta.sma(priceMin,slowLength)
+
+slowMa1=showAdditionMA?ta.sma(price,slowMaLength1):na
+VerySlowMa=showAdditionMA?ta.sma(price,slowMaLength1*verySlowMaMultiple):na
+VerySlowMa2=showAdditionMA?ta.sma(price,slowMaLength1*(verySlowMaMultiple-2)):na
+plot(slowMa1, title="slowMa1", color=color.teal, offset=0)
+plot(VerySlowMa, title="VerySlowMa", color=color.gray, offset=0)
+plot(VerySlowMa2, title="VerySlowMa2", color=color.silver, offset=0)
+//trend status
+//1 slow ma >slow ma1>slow ma2 upper trend
+//2. slolw ma < slow ma2 < slow ma down trend
+//3, no obvious trend
+bool bullBearTrend=na
+if( slowMa1>slowMax and slowMin>ma)
+    bullBearTrend:=false
+if(slowMa1<slowMin and slowMax<ma)
+    bullBearTrend:=true
+    
+plot(ma, "ma", color.red)
+//plot(strategy.equity, title="equity", color=color.white, linewidth=2, style=plot.style_areabr)
+// plot(maMin, title="Min", color=color.blue, offset=0)
+// plot(maMax, title="Max", color=color.blue, offset=0)
+
+plot(upper, title="upper", color=color.gray, offset=0)
+plot(lower, title="lower", color=color.gray, offset=0)
+// plot(upper2, title="upper2", color=color.green, offset=0)
+// plot(lower2, title="lower2", color=color.green, offset=0)
+
+statusColor=na(bullBearTrend)?color.blue:(bullBearTrend?color.lime:color.maroon)
+pslowH=plot(slowMax, title="slowMax", color=color.new(statusColor, 50), offset=0)
+pslowL=plot(slowMin, title="slowMin", color=color.new(statusColor, 50), offset=0)
+fill(pslowH, pslowL, color.new(statusColor, 90))
+
+//https://www.tradingview.com/pine-script-docs/en/v5/concepts/Text_and_shapes.html
+//plotchar(longSignal, "Long", "▲", location.belowbar, color = na(volume) ? color.gray : color.blue, size = size.tiny)
+
+emaVeryFast=ta.ema(price,veryFastLength)
+emaFast=ta.ema(price,fastLength)
+pemaVeryFast=plot(emaVeryFast, title="emaVeryFast", color=color.new(color.yellow, 50), offset=0)
+pemaFast=plot(emaFast, title="emaFast", color=color.new(color.orange, 50), offset=0)
+fill(pemaVeryFast, pemaFast, color.new((emaVeryFast>emaFast? color.green:color.red), 80))
+
+
+
+
+////////////////////////////////////////////////////////////////
+// stotic RSI
+smoothK = input.int(3, "K", minval=1,group = "RSI")
+smoothD = input.int(3, "D", minval=1,group = "RSI")
+lengthRSI = input.int(7, "RSI Length *", minval=1,group = "RSI", tooltip = "could be 7,9,10,13,15, 21")
+lengthStoch = input.int(20, "Stochastic Length *", minval=1,group = "RSI" ,tooltip = "could be 13, 14, 21")
+src1 = input(close, "RSI Source",group = "RSI")
+rsi1 = ta.rsi(src1, lengthRSI)
+k = ta.sma(ta.stoch(rsi1, rsi1, rsi1, lengthStoch), smoothK)
+d = ta.sma(k, smoothD)
+
+bool useBandCross=input.bool(false,"Use Band cross",group = "RSI")
+
+var bool RSI_crZero_signal=na
+if(ta.crossover(k,useBandCross?20:50))
+    RSI_crZero_signal:=true
+if(ta.crossunder(k,useBandCross?80:50))
+    RSI_crZero_signal:=false
+
+
+//bolling
+var bool BollingLongSignal=na
+if ta.crossover(close,lower) or ta.crossover(close,upper)
+    BollingLongSignal:=true
+if ta.crossunder(close,lower) or ta.crossunder(close,upper)
+    BollingLongSignal:=false
+
+//////////////////////////////////////////////////////////////////////////////////////////
+//ATR
+atr_length = input.int(title="ATR Length", defval=14, minval=1,group = "Backtest ATR")		
+m = input.float(1, step = 0.1, title =  "ATR Multiplier", group = "Backtest ATR")		
+a = ta.rma(ta.tr(true), atr_length) * m
+atr_short_stop = ta.rma(ta.tr(true), atr_length) * m + high
+atr_long_stop = low- ta.rma(ta.tr(true), atr_length) * m
+
+///////////////////////////////////////////////////////////////////////////
+//SAR
+sar_start =0.02 //input(0.02)
+sar_increment =0.02// input(0.02)
+sar_maximum = 0.2//input(0.2, "Max Value")
+sar_out = ta.sar(sar_start, sar_increment, sar_maximum)
+
+
+
+
+
+
+
+/////////////////////////////////////////////////////////////////
+//date time range 
+backtestStartDate = input.time(timestamp("1 Oct 2021"), 
+     title="Trade Start Date", group="Backtest Date",
+     tooltip="This start date is in the time zone of the exchange ")
+backtestEndDate = input.time(timestamp("5 Jan 2025"), 
+     title="End Date", group="Backtest Date",
+     tooltip="This End date is in the time zone of the exchange " )
+bool useEndDate=input.bool(false,tooltip = "Use back test end date ", group="Backtest Date") 
+inTradeWindow =  (time >= backtestStartDate) and (useEndDate? (time<=backtestEndDate):true)	
+
+
+bool useStrategy1=input(false,"Use Strategy 1: RSI-Bolling Strategy")
+bool useStrategy2=input(false,"Use Strategy 2: EMA Trend Strategy")
+
+int direction = input.int(0, title = "Strategy Direction",tooltip = "-1 for short, 0 for both, 1 for long", minval=-1, maxval=1, group = "BackTest Open")
+strategy.risk.allow_entry_in(direction == 0 ? strategy.direction.all : (direction < 0 ? strategy.direction.short : strategy.direction.long))
+
+bool useRSISignalOnce=input.bool(true,tooltip = "reset rsi status to na if it be consumed ", group = "BackTest Open")
+
+/////////////////////strategy 1
+// useBollingBandFilter=input.bool(false,title = "Use bolling Band as open filter")
+// useMaFastFilter=input.bool(false,title = "Use ema fast as open filter")
+
+// bool BollingOverSellSignal= ta.lowest(low,10)<lower
+// bool BollingOverBuySignal= ta.highest(high,10)>upper
+
+actmsg=str.tostring(RSI_crZero_signal)+" "+str.tostring(BollingLongSignal)
+s1LongCondition=false
+s1ShortCondition=false
+// s1LongSignal=false
+// s1ShortSignal=false
+if useStrategy1
+    if (RSI_crZero_signal==true and    (BollingLongSignal==true) )
+        s1LongCondition:=true
+        if useRSISignalOnce
+            RSI_crZero_signal:=na
+        BollingLongSignal:=na
+    if (RSI_crZero_signal==false and  (BollingLongSignal==false))
+        s1ShortCondition:=true
+        if useRSISignalOnce
+            RSI_crZero_signal:=na
+        BollingLongSignal:=na
+
+/////////////////////Strategy 2
+s2LongCondition=false
+s2ShortCondition=false
+s2LongSignal=false
+s2ShortSignal=false
+//big trend bullBearTrend
+//small trend price > emaVeryFast>emaFast  or price <emaVeryFast < emaFast
+bool smallTrend=na
+var bool priceCrossMa=na
+if ta.crossover(price,emaFast)
+    priceCrossMa:=true
+if ta.crossunder(price,emaFast)
+    priceCrossMa:=false
+if(price>emaVeryFast and emaVeryFast>emaFast)
+    smallTrend:=true
+if(price<emaVeryFast and emaVeryFast < emaFast)
+    smallTrend:=false
+
+string trendStatusKey= str.tostring(bullBearTrend) +str.tostring(smallTrend)+str.tostring(priceCrossMa)+str.tostring(RSI_crZero_signal) 
+bool fbfs=input.bool(true,"Follow the Big and small trend",group = "Strategy option")
+bool fsab=input.bool(false,"Follow the small rebounce ",group = "Strategy option")
+bool fbas=input.bool(false,"Follow the Big trend ",group = "Strategy option")
+
+if fbas and na(bullBearTrend)
+
+    if( slowMa1>slowMax )
+        bullBearTrend:=false
+    if(slowMa1<slowMin )
+        bullBearTrend:=true
+
+
+if useStrategy2
+//todo, condifition 
+//1. follow big and small trend
+//2. follow small anti big trend rebounce
+//3. anti small follow big trend (but follow RSI)
+    if(not(bullBearTrend==false) and smallTrend==true and priceCrossMa==true and RSI_crZero_signal==true)
+        s2LongSignal:=true
+        priceCrossMa:=na
+        
+        if useRSISignalOnce
+            RSI_crZero_signal:=na
+    if(not(bullBearTrend==true) and smallTrend==false and priceCrossMa==false and RSI_crZero_signal==false)
+        s2ShortSignal:=true
+        priceCrossMa:=na
+        if useRSISignalOnce
+            RSI_crZero_signal:=na
+
+
+
+if s2LongSignal and fbfs
+    s2LongCondition:=(bullBearTrend==true)
+if s2ShortSignal and fbfs
+    s2ShortCondition:=(bullBearTrend==false)
+
+if s1LongCondition and fbfs
+    s1LongCondition:=(bullBearTrend==true)?true:na
+if s1ShortCondition and fbfs
+    s1ShortCondition:=(bullBearTrend==false)?true:na
+
+if s1LongCondition and fsab  //only in no trend
+    s1LongCondition:=na(bullBearTrend)?true:na
+if s1ShortCondition and fsab
+    s1ShortCondition:=na(bullBearTrend)?true:na
+
+
+
+//stop and exit
+
+int stopLossType=input.int(1,minval = 0,maxval = 2,title = "StopLoss type",tooltip = "0-None; 1-fix percent; 2-ATR",group="Backtest Close")
+int stopProfitType=input.int(1,minval = 0,maxval = 3,title = "StopProfit type",tooltip = "0-None; 1-fix percent; 2-ATR; 3-SAR",group="Backtest Close")
+float stopLossPercent=input.float(2,"stoploss percert(%)",step = 0.1, group="Backtest Close",tooltip = "for stopLossType=1")
+float stopProfitMultiple=input.float(2,step = 0.1,tooltip = "mulitple of profit of loss, 2 for fix 2% loss,1.5-1.6 for ATR, in trend could be 3  ", group="Backtest Close") 
+
+//bool checkBarBeforStopLoss=input.bool(false,tooltip = "confirm direction before stop loss",group="Backtest Close")
+//bool checkBarBeforStopProfit=input.bool(false,tooltip = "confirm direction before stop profit",group="Backtest Close")
+
+
+
+
+
+var float LongStopLoss=na
+var float ShortStopLoss=na
+var float LongStopProfit=na
+var float ShortStopProfit=na
+
+s1CloseLongCondition=false
+s1CloseShortCondition=false
+s2CloseLongCondition=false
+s2CloseShortCondition=false
+if s1LongCondition or s2LongCondition
+    ShortStopLoss:=na
+    ShortStopProfit:=na
+    if stopLossType==1
+        LongStopLoss:=close*(100-stopLossPercent)/100
+    if stopLossType==2
+        LongStopLoss:=atr_long_stop
+    if stopProfitType==1
+        LongStopProfit:=close*(100+stopLossPercent*stopProfitMultiple)/100
+    if stopProfitType==2
+        LongStopProfit:=(close-atr_long_stop)*stopProfitMultiple+close
+
+if s1ShortCondition or s2ShortCondition
+    LongStopLoss:=na
+    LongStopProfit:=na
+    if stopLossType==1
+        ShortStopLoss:=close*(100+stopLossPercent)/100
+    if stopLossType==2
+        ShortStopLoss:=atr_short_stop
+    if stopProfitType==1
+        ShortStopProfit:=close*(100-stopLossPercent*stopProfitMultiple)/100
+    if stopProfitType==2
+        ShortStopProfit:=close-(atr_short_stop-close)*stopProfitMultiple   
+
+
+if stopProfitType==3 and (useStrategy1 or useStrategy2)//use sar
+    //if strategy.position_size>0 
+    if close>sar_out and sar_out>LongStopLoss
+        LongStopLoss:=sar_out
+        ShortStopLoss:=na
+    //if strategy.position_size<0 
+    if close<sar_out and sar_out<ShortStopLoss
+        ShortStopLoss:=sar_out
+        LongStopLoss:=na
+
+if s2ShortSignal==true and strategy.position_size>0
+    s2CloseLongCondition:=true
+    actmsg:="exit long2 trend down"
+
+if s2LongSignal==true and strategy.position_size<0
+    s2CloseShortCondition:=true
+    actmsg:="exit Short2 trend up"
+
+
+if strategy.position_size>0 and close<LongStopLoss 
+    s1CloseLongCondition:=true
+    s2CloseLongCondition:=true
+    actmsg:="stoploss:"+str.tostring(math.round(LongStopLoss,2))
+
+if strategy.position_size<0 and close>ShortStopLoss 
+    s1CloseShortCondition:=true
+    s2CloseShortCondition:=true
+    actmsg:="stoploss:"+str.tostring(math.round(ShortStopLoss,2))
+if strategy.position_size>0 and close>LongStopProfit  
+    s1CloseLongCondition:=true
+    s2CloseLongCondition:=true
+    actmsg:="stopProfit:"+str.tostring(math.round(LongStopProfit,2))
+
+if strategy.position_size<0 and close<ShortStopProfit 
+    s1CloseShortCondition:=true
+    s2CloseShortCondition:=true
+    actmsg:="stopProfit:"+str.tostring(math.round(ShortStopProfit,2))
+    
+
+bool shortWinloss=na
+bool longWinloss=na
+bool shortWinloss2=na
+bool longWinloss2=na
+bool showWinLoss=input.bool(false)
+
+if((useStrategy1 or useStrategy2) and inTradeWindow)
+
+    if(s1LongCondition)
+        if strategy.position_size<0  and showWinLoss
+            shortWinloss:=   strategy.position_avg_price>close
+
+        strategy.entry("S1-Long", strategy.long, comment="s1 buy "+actmsg)
+
+    if(s1ShortCondition)
+        if strategy.position_size>0   and showWinLoss
+            longWinloss:= strategy.position_avg_price <close
+        strategy.entry("S1-Short", strategy.short, comment="s1 sell "+actmsg)
+
+    
+    if(s1CloseLongCondition )
+        longWinloss:=showWinLoss? strategy.position_avg_price <close :na
+        strategy.close("S1-Long",  comment="exit s1 buy "+actmsg)
+    if(s1CloseShortCondition )
+        shortWinloss:=showWinLoss? strategy.position_avg_price >close :na
+        strategy.close("S1-Short",  comment="exit s1 sell "+actmsg)
+
+
+    if(s2LongCondition)
+        if strategy.position_size<0  and showWinLoss
+            shortWinloss2:=   strategy.position_avg_price>close
+        strategy.entry("S2Long", strategy.long, comment="s2 buy "+actmsg+trendStatusKey)
+
+    if(s2ShortCondition)
+        if strategy.position_size>0   and showWinLoss
+            longWinloss2:= strategy.position_avg_price <close
+        strategy.entry("S2Short", strategy.short, comment="s2 sell "+actmsg+trendStatusKey)
+    
+    if(s2CloseLongCondition )
+        longWinloss2:=showWinLoss? strategy.position_avg_price <close :na
+        strategy.close("S2Long",  comment="exit s2 "+actmsg+trendStatusKey)
+    if(s2CloseShortCondition )
+        shortWinloss2:=showWinLoss? strategy.position_avg_price >close :na
+        strategy.close("S2Short",  comment="exit s2 "+actmsg+trendStatusKey)
+    
+
+
+//plotchar(s1LongCondition, "S1-B", "▲/ns1", location.belowbar, color =  color.blue, size = size.small)
+plotshape(useStrategy1 and s1LongCondition, "", shape.arrowup,   location.belowbar, color.yellow, 0, text = "▲",textcolor= color.yellow, size = size.normal)
+plotshape(useStrategy1 and s1ShortCondition, "", shape.arrowdown,   location.abovebar, color.blue, 0, text = "▼",textcolor= color.blue, size = size.normal)
+plotshape(useStrategy2 and s2LongSignal, "", shape.arrowup,   location.belowbar, color.orange, 0, text = "▲",textcolor= color.orange, size = size.normal)
+plotshape(useStrategy2 and s2ShortSignal, "", shape.arrowdown,   location.abovebar, color.aqua, 0, text = "▼",textcolor= color.aqua, size = size.normal)
+//plotshape(useStrategy2 and s2CloseLongCondition, "", shape.arrowdown,   location.belowbar, color.aqua, 0, text = "▼",textcolor= color.fuchsia, size = size.normal)
+
+plot(LongStopLoss,style = plot.style_circles,color=color.red)
+plot(LongStopProfit,style = plot.style_circles,color = color.lime)
+
+plot(ShortStopLoss,style = plot.style_circles,color=color.fuchsia)
+plot(ShortStopProfit,style = plot.style_circles,color = color.aqua)
+
+
+// plot((strategy.position_size>0 and inTradeWindow )?LongStopLoss:na,style = plot.style_circles,color=color.maroon)
+// plot((strategy.position_size>0 and inTradeWindow )?LongStopProfit:na,style = plot.style_circles,color = color.lime)
+
+// plot((strategy.position_size<0 and inTradeWindow) ?ShortStopLoss:na,style = plot.style_circles,color=color.fuchsia)
+// plot((strategy.position_size<0 and inTradeWindow )?ShortStopProfit:na,style = plot.style_circles,color = color.aqua)
+
+plotchar(not na(longWinloss) , "win", "➊", location.belowbar, color =longWinloss? color.new(color.green,30):color.new(color.red,30), size = size.small)
+plotchar(not na(shortWinloss) , "loss", "➊", location.abovebar, color =shortWinloss? color.new(color.blue,30):color.new(color.fuchsia,30), size = size.small)
+plotchar(not na(longWinloss2) , "win", "❷", location.belowbar, color =longWinloss2? color.new(color.green,30):color.new(color.red,30), size = size.small)
+plotchar(not na(shortWinloss2) , "loss", "❷", location.abovebar, color =shortWinloss2? color.new(color.blue,30):color.new(color.fuchsia,30), size = size.small)

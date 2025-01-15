@@ -1,0 +1,623 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © stoneskin
+
+//@version=5
+//change logs
+//v74 2022-11-04 add filter with SAR, increase to 75%
+//v75 2022-11-04 add exist logic to check price, increase winrate to 80% but net profit drop little
+//v89 2022-11-05 fix the backtest enddate bug, and fix the start date and end date
+//v99 2022-11-05 refactor the ma and macd logic, win rate could be 90% for 2021-10-1 to 2022-10-2 for tqqq
+//v112 2022-11-05 fix the bug of cci short, CCI setting not good for short long only.
+//v127 2022-11-06 add fix ratio exit option.
+//v128 2022-11-06 separate cci open and key.
+//v132 2022-11-06 separate ma cross and macd input and logic.
+//v136 2022-11-07 add Hull suite
+//v147 2022-11-07 add use hull+sar as exit looks better
+//v150 2022-11-08 update the char coloer, update mach hist key 
+//v174 2022-11-09 add and show unknow and rare conditions
+
+
+strategy("My Predict macd", "myPredMacd", overlay=true,initial_capital = 10000,default_qty_type = strategy.percent_of_equity,default_qty_value = 50,process_orders_on_close = true )
+useDateFilterEnd = input.bool(false, title="End Backtest at The End Date", group="Backtest Time Period")
+trainingStartDate = input.time(timestamp("1 Oct 2019"), 
+     title="Training Start", group="Backtest Time Period",
+     tooltip="This start date is in the time zone of the exchange, suggest around 3 year " )
+backtestStartDate = input.time(timestamp("1 Oct 2021"), 
+     title="Trade Start Date", group="Backtest Time Period",
+     tooltip="This start date is in the time zone of the exchange ")
+backtestEndDate = input.time(timestamp("1 Oct 2022"), 
+     title="Trade End Date", group="Backtest Time Period",
+     tooltip="This End date is in the time zone of the exchange " )
+inTradeWindow =  time >= backtestStartDate	
+inTrainingWindow= time>= trainingStartDate
+if (useDateFilterEnd)
+    inTradeWindow:=inTradeWindow and time<=backtestEndDate
+    inTrainingWindow:=inTrainingWindow and time <=backtestEndDate
+
+tradingDirection=input.int(defval = 0,minval = -1,maxval = 1,title = "long/short/both",tooltip = "-1=short,-1=long,0=both",group = "BackTest")
+tradingLong=tradingDirection>-1 and inTradeWindow
+tradingShort=tradingDirection<1 and inTradeWindow
+
+price=close
+
+
+
+// useactSignal=input.bool(false)
+// actSignal_value= input(close, title="extSgingl")
+// actSignal="-"
+
+// **************************MA Cross ***********************************************//
+useMABullBear=input.bool(true,"use Slow MM as Bull/Bear key",group = "Ma Cross")
+useMACrossKey=input.bool(true,"use MA cross key",group = "Ma Cross")
+useMACrossOpen=input.bool(true,"use MA cross Open",group = "Ma Cross")
+fastLengh= input.int(12,group = "Ma Cross")
+slowLength=input.int(26,group = "Ma Cross")
+verySlowLength=input.int(200,group = "Ma Cross")
+
+
+fastMA = ta.ema(price, fastLengh)
+slowMA = ta.ema(price, slowLength)
+veryslowMA = ta.sma(price, verySlowLength)
+
+plot(useMACrossKey?fastMA:na, color=color.blue, title="MAFast")
+plot(useMACrossKey?slowMA:na, color=color.navy, title="MASlow")
+plot(useMABullBear?veryslowMA:na, color=color.purple, title="MAVerySlow")
+
+//bull bear for trend
+bool bullbear=(slowMA < veryslowMA)
+string macdBullBearKey=bullbear?"D":"U"
+
+//ema crose
+maCross=""
+if(ta.crossover(price,slowMA))
+    maCross:=maCross+"1"
+if(ta.crossunder(price,slowMA))
+    maCross:=maCross+"2"
+if(ta.crossover(price,fastMA))
+    maCross:=maCross+"3"
+if(ta.crossunder(price,fastMA))
+    maCross:=maCross+"4"
+if(ta.crossover(fastMA,slowMA))
+    maCross:=maCross+"5"
+if(ta.crossunder(fastMA,slowMA))
+    maCross:=maCross+"6"
+maCross:="ma"+(maCross==""?"--":maCross)
+
+bool maCrossLongCondition=na
+if( (str.contains(maCross,"ma1") or  str.contains(maCross,"ma5")) and bullbear)
+    maCrossLongCondition:=true
+      
+if((str.contains(maCross,"ma2") or  str.contains(maCross,"ma6")) and not bullbear)
+    maCrossLongCondition:=false
+
+//************************** MACD ***********************************************//
+
+useMACD=input.bool(true,"use MACD cross key",group = "macd")
+useMACDHist=input.bool(false,"use MACD Hist cross key",group = "macd")
+useMACDHistOpen=input.bool(true,"use MACD Hist cross Open",group = "macd")
+
+macdFastLengh= input.int(14,group = "macd")
+macdSlowLength=input.int(26,group = "macd")
+macdSignalLengh=input.int(11,group = "macd",tooltip = "for macd only best is 9")
+
+macdFastMA = ta.ema(price, macdFastLengh)
+macdSlowMA = ta.ema(price, macdSlowLength)
+
+macd = macdFastMA - macdSlowMA
+macd_signal = ta.sma(macd, macdSignalLengh)
+hist = macd - macd_signal   
+
+// macd cross
+
+macdCross="md"
+if(ta.crossover(macd,macd_signal))
+    macdCross:=macdCross+"U"
+if(ta.crossunder(macd,macd_signal))
+    macdCross:=macdCross+"D"
+
+macdCross:=macdCross+(macd>0?"1":"0")
+
+
+bool macdHistCrossLongCondition=na
+macdHistCross=  "mh"+(hist>0?"1":"0")
+if ta.crossover(hist, 0) and macd > 0 and fastMA > slowMA and close[slowLength] > veryslowMA 
+    macdHistCross:="mhL"
+    macdHistCrossLongCondition:=true
+if ta.crossunder(hist, 0) and macd < 0 and fastMA < slowMA and close[slowLength] < veryslowMA
+    macdHistCross:="mhS"
+    macdHistCrossLongCondition:=false
+
+
+macdKey=(useMABullBear?macdBullBearKey:"")+ (useMACD?macdCross:"")+(useMACrossKey?maCross:"")+(useMACDHist?macdHistCross:"")
+
+//=================================== double CCI signal ==================================//
+useCCIKey=input.bool(true,"Use CCI as Key ",group = "CCI")
+useCCIOpen=input.bool(true,"Use CCI as Open",group = "CCI")
+cci_fast_length = input(title="CCI Fast Length", defval=53 , group="CCI",tooltip = "8 for 5m, 55 for 1h+, 53 for tqqq 1h")
+cci_slow_length = input(title="CCI Slow Length", defval=128, group="CCI",tooltip = "24 for 5m, 144 for 1h+,128 tqqq 1h")
+cci_src = hlc3 //input(hlc3, title="Source")
+cci_bandValue=input.int(148,"CCI band",100,500,tooltip = "144 for 5m, 125 for 3h+, 150 for tqqq 1h", group="CCI")
+
+
+cci_maFast = ta.sma(cci_src, cci_fast_length)
+cci_Fast = (cci_src - cci_maFast) / (0.015 * ta.dev(cci_src, cci_fast_length))
+
+cci_maSlow = ta.sma(cci_src, cci_slow_length)
+cci_Slow = (cci_src - cci_maSlow) / (0.015 * ta.dev(cci_src, cci_slow_length))
+
+cciCd=cci_Fast-cci_Slow
+smoothingLength = input.int(title = "signal smooth Length", defval = 5, minval = 1, maxval = 100, group="CCI")
+ccicd_signal=ta.sma(cciCd,smoothingLength)
+cci_hist=cciCd-ccicd_signal
+
+plot(useCCIKey?cci_maFast:na, color=color.navy, title="cciFast")
+plot(useCCIKey?cci_maSlow:na, color=color.maroon, title="cciSlow")
+
+//cci_longLogic=input.int(1,"CCI long Logic", maxval = 3,minval=1,group = "CCI",tooltip = "1,fast>slow, 2, slow>0, 3 fast and slow>0")
+
+//cross over siginal
+var  cci_signal="-"
+cci_signal:=(cci_Fast<cci_Slow)?"0":"1"
+
+if(ta.crossover(cci_Fast,cci_Slow))
+    cci_signal:="2"
+if(ta.crossunder(cci_Fast,cci_Slow))
+    cci_signal:="3"
+if(ta.crossover(cci_Fast,cci_bandValue))
+    cci_signal:="4"
+if(ta.crossunder(cci_Fast,cci_bandValue))
+    cci_signal:="5"
+if(ta.crossover(cci_Fast,0))
+    cci_signal:="6"
+if(ta.crossunder(cci_Fast,0))
+    cci_signal:="7"
+if(ta.crossunder(cci_Fast,-cci_bandValue))
+    cci_signal:="8"
+if(ta.crossover(cci_Fast,-cci_bandValue))
+    cci_signal:="9"
+
+// area signal
+cci_area_sginal="-"
+if(cci_Fast>0)
+    cci_area_sginal:=cci_Fast>cci_bandValue?"C1":"C2"
+if(cci_Fast<0)
+    cci_area_sginal:=cci_Fast> -cci_bandValue?"C3":"C4"
+
+
+//cci_hist
+cci_hist_signal=cci_hist>0?"1":"0"
+bool cciLongCondition=na
+if(ta.crossover(cci_hist[1],0) and cci_hist>cci_hist[1] and cci_Fast>-10)
+    cci_hist_signal:=cci_hist_signal+"chL"
+    cciLongCondition:=true
+if(ta.crossunder(cci_hist[1],0) and cci_hist<cci_hist[1] and cci_Fast<0)
+    cci_hist_signal:=cci_hist_signal+"chS"
+    cciLongCondition:=false
+
+cci_signal:=cci_area_sginal+cci_signal+cci_hist_signal
+
+cci_key=useCCIKey?cci_signal:""
+
+
+//***************************Hull suite (HMA) *****************************************//
+//FUNCTIONS
+//HMA
+int useHull =input.int(1,title="useHull 0=NotUse,1=HML,2,EHMA,3,THMA ",group = "Hull suite")
+bool useHullAsFilter=input.bool(false,"User Hull As Open Filter",group = "Hull suite" )
+bool useHullOpen=input.bool(false,"User Hull As Open check",group = "Hull suite" )
+useHullasExit=input.bool(true,"Use Hull+SAR as Exit",group =  "BackTest")
+HMA(_src, _length) =>
+    ta.wma(2 * ta.wma(_src, _length / 2) - ta.wma(_src, _length), math.round(math.sqrt(_length)))
+//EHMA    
+EHMA(_src, _length) =>
+    ta.ema(2 * ta.ema(_src, _length / 2) - ta.ema(_src, _length), math.round(math.sqrt(_length)))
+//THMA    
+THMA(_src, _length) =>
+    ta.wma(ta.wma(_src, _length / 3) * 3 - ta.wma(_src, _length / 2) - ta.wma(_src, _length), _length)
+//SWITCH
+HullMode(modeSwitch, src, len) =>
+    modeSwitch == 1 ? HMA(src, len) : modeSwitch == 2 ? EHMA(src, len) : modeSwitch == 3 ? THMA(src, len / 2) : na
+
+hma_src=price
+//hma_modeSwitch = input.string('Hma', title='Hull Variation', options=['Hma', 'Thma', 'Ehma'], group="Hull suite")
+hma_length = input(55, title='HMA lentgh', tooltip = "Length(180-200 for floating S/R , 55 for swing entry)", group="Hull suite")
+hma_lengthMult = input(1.0, title='HMA mutiple',tooltip = "Length multiplier (Used to view higher timeframes with straight band)", group="Hull suite")
+
+//OUT
+
+float HULL = HullMode(useHull,hma_src, int(hma_length * hma_lengthMult))//Mode(hma_modeSwitch, hma_src, int(hma_length * hma_lengthMult))
+MHULL = HULL[0]
+SHULL = HULL[2]
+
+bool hull_signal=HULL > HULL[2]
+
+hullColor =  color.new( hull_signal ?#00ff00 : #ff0000 ,60)
+Fi1 = plot(MHULL, title='MHULL', color=hullColor, linewidth=1)
+Fi2 = plot(SHULL, title='SHULL', color=hullColor, linewidth=1)
+fill(Fi1, Fi2, title='Band Filler', color=hullColor)
+//***************************End Hull suite (HMA)*****************************************//
+
+
+//
+//=================================== SAR signal ==================================//
+sar_start =0.02 //input(0.02)
+sar_increment =0.02// input(0.02)
+sar_maximum = 0.2//input(0.2, "Max Value")
+sar_out = ta.sar(sar_start, sar_increment, sar_maximum)
+plot(sar_out, "ParabolicSAR", style=plot.style_cross, color=color.gray)
+bool sar_signal=sar_out<price
+
+useSarAsKey=input.bool(false,"Use SAR as Key",group = "SAR")
+useSarFilter=input.bool(true,"Use SAR as Open filter",group = "SAR")
+//useSarOpen=input.bool(true,"Use SAR as Open Signal",group = "SAR")
+useSARasExit=input.bool(false,"Use SAR as Exit",group =  "BackTest")
+sarKey=useSarAsKey?(sar_signal?"B":"S"):""
+
+
+
+
+//=================================================================
+
+
+//*********************************************************************//
+// use ext signal not working anymore 2022-11-03
+// if useExtSignal
+    
+//     extSignal:=str.tostring(math.round(extSignal_value>99.9?extSignal_value/10:extSignal_value,0))
+// else
+
+string actSignal=cci_key+sarKey+macdKey
+
+// ==================================== long short condidtion ====================================//
+bool longCondition=na
+bool shortCondition=na
+actionMsg=""
+predMsg=""
+var predKeys =""
+predKeys:="p-"+str.tostring(actSignal)
+actionKey=""
+//if not str.endswith(actSignal,"----")
+if(useMACrossOpen)
+    if(maCrossLongCondition==true)
+        longCondition:=true
+        shortCondition:=false
+    if(maCrossLongCondition==false)
+        longCondition:=false
+        shortCondition:=true
+    
+if(useMACDHistOpen)
+    if macdHistCrossLongCondition==true
+        longCondition:=true
+        shortCondition:=false
+    if macdHistCrossLongCondition==false
+        longCondition:=false
+        shortCondition:=true
+   
+if(useCCIOpen)
+    if cciLongCondition==true
+        longCondition:=true
+        shortCondition:=false
+    if cciLongCondition==false 
+        longCondition:=false
+        shortCondition:=true    
+bool sarHullLongCondition=na
+// if(useSarOpen and (sar_signal!=sar_signal[1] or hull_signal!=hull_signal[1]))//sar_switch
+//     if(sar_signal and hull_signal) //long
+//         sarHullLongCondition:=true
+//         longCondition:=true
+//     if( not (sar_signal or hull_signal)) //short
+//         longCondition:=false
+//         sarHullLongCondition:=false
+if(useHullOpen and hull_signal!=hull_signal[1])
+    if(sar_signal and hull_signal) //long
+        sarHullLongCondition:=true
+        longCondition:=true
+    if( not (sar_signal or hull_signal)) //short
+        longCondition:=false
+        sarHullLongCondition:=false
+
+if useSarFilter //only open with sar direction
+    if(longCondition and not sar_signal)
+        longCondition:=na
+    if(shortCondition and sar_signal)
+        longCondition:=na
+if useHullAsFilter
+    if(longCondition and not hull_signal)
+        longCondition:=na
+    if(shortCondition and hull_signal)
+        longCondition:=na
+
+
+/////////////////////////////////////////////////////////////////////////////
+//start pred code
+//define a dictionary
+
+var  hisScoresKey  = array.new_string(0)
+var  hisScoreWinCt = array.new_int(0)
+var  hisScoreLossCt = array.new_int(0)
+var  hisScoreMaxWin = array.new_float(0)
+var  hisScoreMaxLoss = array.new_float(0)
+var  hisScoreAvgWin = array.new_float(0)
+var  hisScoreAvgLoss = array.new_float(0)
+//var hisScoreSortKey = array.new_string(0)
+
+
+
+hisScores_getValue (score) =>
+    string key=str.tostring(score)
+    int ind=array.indexof(hisScoresKey,key)
+    int winCt=na
+    int lossCt=na
+    float maxWin=na
+    float maxLoss=na
+    float avgWin=na
+    float avgLoss=na
+
+    if(ind>-1)    
+        winCt:=array.get(hisScoreWinCt, ind)
+        lossCt:=array.get(hisScoreLossCt, ind)
+        maxWin:=array.get(hisScoreMaxWin, ind)
+        maxLoss:=array.get(hisScoreMaxLoss, ind)
+        avgWin:=array.get(hisScoreAvgWin, ind)
+        avgLoss:=array.get(hisScoreAvgLoss, ind)
+    [ind,winCt,lossCt,maxWin,maxLoss,avgWin,avgLoss]
+
+
+hisScores_setValue (string key, float p0, float p5,int length) => 
+    //float p0=ta.sma(price,length) //use avg price to compare 
+    
+    //float p5=price[length]
+    bool isWin=    p0>=p5
+    int winCt=isWin?1:0
+    int lossCt=isWin?0:1
+    float win=math.round(100*(p0-p5)/p5,2) //%
+    float maxPrice=ta.highest(high,length)
+    float minPrice=ta.lowest(low,length) //find highest value for win and lowest vlue for loss
+    float maxWin= math.round(100*(maxPrice-p5)/p5,2)
+    float maxLoss=math.round(100*(minPrice-p5)/p5,2)
+    //float loss=math.round(100*(p0-p5)/p5,2)  
+
+    int ind=array.indexof(hisScoresKey,key)  
+    string reMsg=""
+    if(ind==-1) //add first item
+        array.push(hisScoresKey, key)
+        array.push(hisScoreWinCt , winCt)
+        array.push(hisScoreLossCt , lossCt)
+        array.push(hisScoreMaxWin ,  maxWin)
+        array.push(hisScoreMaxLoss , maxLoss)
+        array.push(hisScoreAvgWin ,isWin?win:0)
+        array.push(hisScoreAvgLoss , isWin?0:win)
+        reMsg:="ind:"+str.tostring(ind)+" "+str.tostring(p0)+ " " +str.tostring(p5)+ " isWin:"+str.tostring(isWin)+" max:"+str.tostring(maxPrice)+" MaxRate:"+str.tostring(maxWin) + " "+str.tostring(maxLoss)+" winRate:"+str.tostring(win)+"%" 
+    
+        
+    else
+        [pInd,pWinCt,pLossCt,pMaxWin,pMaxLoss,pAvgWin,pAvgLoss]=hisScores_getValue (key)
+        wCt=winCt+pWinCt
+        lCt=lossCt+pLossCt             
+        avgWin=isWin?wCt>0?(pAvgWin*pWinCt+win)/wCt:win:pAvgWin
+        avgLoss=(not isWin)?lCt>0?(pAvgLoss*pLossCt+win)/lCt:win:pAvgLoss
+        avgMaxWin=(pMaxWin*(pWinCt+pLossCt)+maxWin)/(pWinCt+pLossCt+1)
+        avgMaxLoss=(pMaxLoss*(pWinCt+pLossCt)+maxLoss)/(pWinCt+pLossCt+1)
+        array.set(hisScoreMaxWin , ind, avgMaxWin)
+        array.set(hisScoreMaxLoss , ind,avgMaxLoss)
+        if(isWin )            
+            array.set(hisScoreWinCt , ind, wCt)            
+            array.set(hisScoreAvgWin , ind, avgWin)
+                
+        else            
+            array.set(hisScoreLossCt , ind, lCt)              
+            array.set(hisScoreAvgLoss , ind, avgLoss)
+            
+        reMsg:="ind:"+str.tostring(ind)+" "+str.tostring(p0)+ " " +str.tostring(p5)+ " isWin:"+str.tostring(isWin)+" max:"+str.tostring(maxPrice)+" MaxRate:"+str.tostring(maxWin)+ " "+str.tostring(maxLoss)+" avgWin:"+str.tostring(avgWin) +" avgLoss:"+str.tostring(avgLoss)
+    
+    reMsg    
+
+predLength = input.int(defval=10, minval=2, maxval=100, title='pre check length',group="Predict",tooltip = "How many period length for pred")
+predAfterInTradeWindow=input.bool(defval = true,title = "show pred after pretest trade windion",group="Predict",tooltip = "should always be true?")
+predShowDetail=input.bool(defval = false,title = "show pred details",group="Predict", tooltip = "show the list of pre keys info")
+predEnableForTradingFilter=input.bool(defval = true,title = "enable pred as Tradng fitler",group="Predict",tooltip = "only pred uprate >=0 wil long and uprate<=0 will short")
+predSkipIfCountSmallthan=input.int(defval = 2,title = "if match key small than the value will skip",group="Predict",tooltip = "if skip, 1 or 2 win or loss will ignored")
+predIncludeRareCondition=input.bool(defval = true,title = "include Rare keys ☯",group="Predict",tooltip = "may buy Rare items")
+predIncludeUnknownCondition=input.bool(defval = false,title = "include first happen keys ➊",group="Predict",tooltip = "may not buy this Rare items")
+//=input.bool(defval = false,title = "Maybuy item (between 0 and threshold)",group="Predict",tooltip = "may buy high risk items")
+predOverwriteTradingAction=input.bool(defval = false,title = "overwrote Tading action with pred ",group="Predict", tooltip = "only use pred uprate to make long/short action")
+predActionThreshold=input.float(25,title = "pred acton threshod",group="Predict",tooltip = "-10 ot 50, lower will be more risky")
+//predShowInChart=input.bool(defval = false,title = "show pred in chart",group="Predict")
+
+
+boxMsg = "=====================================\n"
+bool rareCondition=false
+bool unknownCondition=false 
+//ema_pred = ta.sma(price, predLength)
+//p0=ta.ema(price, predLength)
+if(bar_index>predLength+1 and inTrainingWindow)
+    
+    string reMsg=hisScores_setValue(predKeys[predLength],price,price[predLength],predLength)
+    boxMsg:=reMsg+"\n"+boxMsg
+else
+    boxMsg:=str.tostring(bar_index)+ "   inTraingWindow:"+str.tostring(inTradeWindow)+"  price:"+str.tostring(price)+ " p5="+str.tostring(price[predLength]) +"\n"+boxMsg
+var float upRate=na
+upRate:=0
+
+
+boxMsg:=boxMsg+predKeys+"  -->  "//+actionKey+" "//+actionKey2 +" :"
+
+[ind,winCt,lossCt,maxWin,maxLoss,avgWin,avgLoss] = hisScores_getValue (predKeys)
+if(ind>-1)
+    upRate:=math.round(100*(winCt-lossCt)/(winCt+lossCt),2)
+    if(predEnableForTradingFilter)
+        if(longCondition) 
+            if(upRate<predActionThreshold and lossCt>predSkipIfCountSmallthan)
+                longCondition:=na
+                actionMsg:=" Not Buy because low rise Rate!"
+                actionKey:="low rate"
+            if(winCt<=predSkipIfCountSmallthan)
+                rareCondition:=true
+                
+        if(shortCondition)
+            if(upRate>-predActionThreshold and winCt>predSkipIfCountSmallthan)
+                shortCondition:=na
+                actionMsg:=" Not Short because hgh rise Rate!"
+                actionKey:="low rate"
+            if(lossCt<=predSkipIfCountSmallthan)
+                rareCondition:=true
+
+    
+                        
+    if(predOverwriteTradingAction and not str.endswith(predKeys,"----"))
+        if(upRate>predActionThreshold  and (winCt+lossCt)>predSkipIfCountSmallthan*2)
+            longCondition:=true
+            actionKey:="PredOverwrite"
+        if(upRate<-predActionThreshold and (winCt+lossCt)>predSkipIfCountSmallthan*2)
+            longCondition:=false
+            actionKey:="PredOverwrite"
+        
+    boxMsg:=boxMsg+str.tostring(upRate)+ "%  long="+str.tostring(longCondition) +" short="+str.tostring(shortCondition)+"\n"
+    //boxMsg:=boxMsg+"barIndex="+str.tostring(bar_index)+",isNew="+str.tostring(barstate.isnew)+",isLast="+str.tostring(barstate.islast)+",isLfh="+str.tostring(barstate.islastconfirmedhistory)+"\n"
+    upMsg="upRate="+ str.tostring(math.round(100*winCt/(winCt+lossCt),2))+"%("+str.tostring(winCt)+"), avgHigh="+str.tostring(math.round(maxWin,2))+"% ,avgWin="+str.tostring(math.round(avgWin,2))+"%\n"
+    downMsg="downRate="+ str.tostring(math.round(100*lossCt/(winCt+lossCt),2))+"%("+str.tostring(lossCt)+"), avgLow="+str.tostring(math.round(maxLoss,2))+"% ,avgLoss="+str.tostring(math.round(avgLoss,2))+"%\n"
+    boxMsg:=boxMsg+"hisScoresKey size="+str.tostring(array.size(hisScoresKey))+", len="+str.tostring(predLength)+",\n"+upMsg+downMsg
+    actionMsg:=actionMsg+predKeys+" "+actionKey+" "+str.tostring(upRate)+"%("+str.tostring(winCt)+":"+str.tostring(lossCt)+")"
+else
+    actionMsg:=actionMsg+predKeys+" "+actionKey+" "+str.tostring(upRate)+"%("+str.tostring(winCt)+":"+str.tostring(lossCt)+")"
+    boxMsg:=boxMsg+"pred Key not found and skip \n"
+    //if skip decision if not found
+    // if(predEnableForTradingFilter and predSkipIfCountSmallthan>0)
+    //     shortCondition:=na
+    //     longCondition:=na
+    unknownCondition:=true
+
+
+
+
+if(barstate.islast and (inTrainingWindow or predAfterInTradeWindow) and predShowDetail) //add time consume on last bar only
+    boxMsg:=boxMsg+"\n============== Pred Keys=======================\n"
+    lab = ""
+    ct=0
+    for i = 0 to array.size(hisScoresKey) - 1
+        if(ct>25)
+            break
+        dwinCt=array.get(hisScoreWinCt,i)
+        dlossCt=array.get(hisScoreLossCt,i)
+        dmaxWin=array.get(hisScoreMaxWin, i)
+        dmaxLoss=array.get(hisScoreMaxLoss, i)
+        davgWin=array.get(hisScoreAvgWin, i)
+        davgLoss=array.get(hisScoreAvgLoss, i)
+        dupRate =math.round(100*(dwinCt-dlossCt)/(dwinCt+dlossCt),2)
+        //if(str.contains(array.get(hisScoresKey, i),"chS"))
+        if(dwinCt+dlossCt>2 and math.abs(dupRate)>predActionThreshold)
+            lab := lab+"i="+str.tostring(i)+" "
+            lab := lab + array.get(hisScoresKey, i) + "  upRate="+str.tostring(dupRate)+"%"
+            lab := lab+"  winCt="+str.tostring(dwinCt) +" lossCt="+str.tostring(dlossCt) 
+            lab := lab+"  avgHg="+str.tostring(math.round(dmaxWin,2)) +"% avgLw="+str.tostring(math.round(dmaxLoss,2)) +"%"
+            lab := lab+"  avgW="+str.tostring(math.round(davgWin,2)) +"% avgL="+str.tostring(math.round(davgLoss,2)) +"% \n"
+            //lab:=lab+"\n"
+            ct:=ct+1
+    boxMsg:=boxMsg+lab
+
+myBox=box.new(left=bar_index+10,top=(high+20)*1.1,right=bar_index+75,bottom=(low-20)*0.9,bgcolor =color.new(color.purple, 70), border_width=0,text = boxMsg,text_color = color.white,text_size=size.normal,text_wrap = text.wrap_none,text_halign = text.align_left)
+box.delete(myBox[1])
+//end of pred code
+////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+charColorL= color.new(upRate>predActionThreshold?color.orange: upRate>0?color.olive:color.gray,30)
+charColorS= color.new(upRate<-predActionThreshold? color.fuchsia:upRate<0?color.olive:color.gray,30)
+
+
+
+plotchar(longCondition==true and rareCondition , "Long", "☯", location.belowbar, color =  charColorL, size = size.small)
+plotchar(shortCondition==true and rareCondition , "Short", "☯", location.abovebar, color = charColorS, size = size.small)
+plotchar(longCondition==true and unknownCondition , "Long", "➊", location.belowbar, color =  charColorL, size = size.small)
+plotchar(shortCondition==true and unknownCondition , "Short", "➊", location.abovebar, color = charColorS, size = size.small)
+
+plotchar(cciLongCondition==true , "Long", "C", location.belowbar, color =  charColorL, size = size.small)
+plotchar(cciLongCondition==false, "Short", "C", location.abovebar, color = charColorS, size = size.small)
+plotchar(macdHistCrossLongCondition==true , "Long", "H", location.belowbar, color =  charColorL, size = size.auto)
+plotchar(macdHistCrossLongCondition==false, "Short", "H", location.abovebar, color = charColorS, size = size.auto)
+plotchar(maCrossLongCondition==true , "Long", "M", location.belowbar, color =  charColorL, size = size.small)
+plotchar(maCrossLongCondition==false, "Short", "M", location.abovebar, color = charColorS, size = size.small)
+// plotchar(sarHullLongCondition==true , "Long", "R", location.belowbar, color =  charColorL, size = size.small)
+// plotchar(sarHullLongCondition==false, "Short", "R", location.abovebar, color = charColorS, size = size.small)
+
+if(not predIncludeRareCondition  and rareCondition)//may buy
+    longCondition:=na
+    shortCondition:=na
+if(not predIncludeUnknownCondition  and unknownCondition)//may buy
+    longCondition:=na
+    shortCondition:=na
+
+plotchar(longCondition==true  , "Long",  "▲", location.belowbar, color =  charColorL, size = size.normal)
+plotchar(shortCondition==true , "Short", "▼", location.abovebar, color = charColorS, size = size.normal)
+// labelColor=upRate<-30?color.fuchsia:upRate<-10?color.aqua:upRate<10?color.silver:upRate<30?color.blue:color.orange
+// if( str.endswith(predKeys,"true"))
+//     if(upRate>0)
+//         label.new(bar_index,math.max(low,low[1])*0.95,actionMsg,color = labelColor,style = label.style_label_up)
+//     else
+//         label.new(bar_index,math.min(high,high[1])*1.05,actionMsg, color = labelColor,style = label.style_label_down)
+
+if(useSARasExit) //use sar value to close the entry
+    if strategy.position_size>0 and price<=sar_out and strategy.position_avg_price<sar_out  and price<price[1]
+        longCondition:=false
+        actionMsg:=actionMsg+"sar exit:"+str.tostring(sar_out)
+    if strategy.position_size<0 and price>=sar_out and strategy.position_avg_price>sar_out and price>price[1]
+        shortCondition:=false
+        actionMsg:=actionMsg+"sar exit:"+ str.tostring(sar_out)
+
+if(useHullasExit and useHull>0) //use sar value to close the entry
+    if strategy.position_size>0 and price<=sar_out and strategy.position_avg_price<sar_out  and price<price[1] and not hull_signal
+        longCondition:=false
+        actionMsg:="hull"+str.tostring(not hull_signal)+actionMsg
+    if strategy.position_size<0 and price>=sar_out and strategy.position_avg_price>sar_out and price>price[1] and hull_signal
+        shortCondition:=false
+        actionMsg:="hull "+str.tostring(hull_signal)+actionMsg
+
+
+useFixExit=input.bool(false,"Fix loss and return",group =  "BackTest")
+fixLossReturnRatio=input.float(1.6,minval = 0.5,maxval = 5,group =  "BackTest",step = 0.1)
+
+var float current_position_stopLoss=0
+var float current_position_stopProfit=0
+if(useFixExit)
+    if( price>current_position_stopProfit and strategy.position_size>0)
+        longCondition:=false
+        actionMsg:="stop profit:"+str.tostring(current_position_stopProfit)
+    if(price<current_position_stopLoss and strategy.position_size>0)
+        longCondition:=false
+        actionMsg:="stop loss:"+str.tostring(current_position_stopLoss)
+    if(price<current_position_stopProfit and strategy.position_size<0)
+        shortCondition:=false
+        actionMsg:="stop profit:"+str.tostring(current_position_stopProfit)
+    if(price>current_position_stopLoss and strategy.position_size<0)
+        longCondition:=false
+        actionMsg:="stop loss:"+str.tostring(current_position_stopLoss)
+
+        
+
+
+if (longCondition==true and tradingLong)
+    current_position_stopProfit:=price*(1-avgLoss*fixLossReturnRatio/100)
+    current_position_stopLoss:=price*(1+avgLoss/100)
+    strategy.entry("Long", strategy.long,stop=price*0.97,comment = actionMsg)
+    if useFixExit
+        label.new(bar_index, close+20, "LstopProfit:"+str.tostring(price)+"*(1-" +str.tostring(avgLoss)+"*"+str.tostring(fixLossReturnRatio)+"/100)="+ str.tostring(current_position_stopProfit),style = label.style_label_down)
+        label.new(bar_index, close-20, "LstopLoss:"+str.tostring(price)+"*(1+" +str.tostring(avgLoss)+"/100)="+ str.tostring(current_position_stopLoss),style = label.style_label_up)
+
+if(longCondition==false and tradingLong)
+    strategy.close("Long",comment = actionMsg)
+
+// shortCondition = ta.crossunder(ta.sma(close, 14), ta.sma(close, 28))
+if (shortCondition==true and tradingShort)
+    current_position_stopProfit:=price*(1-avgWin*fixLossReturnRatio/100)
+    current_position_stopLoss:=price*(1+avgWin/100)
+    strategy.entry("Short", strategy.short,stop = price*1.03,comment = actionMsg)
+    if useFixExit
+        label.new(bar_index, close-20, "SstopProfit:"+str.tostring(price)+"*(1-" +str.tostring(avgWin)+"*"+str.tostring(fixLossReturnRatio)+"/100)="+ str.tostring(current_position_stopProfit),style = label.style_label_up,color = #ffeb3b)
+        label.new(bar_index, close+20, "SstopLoss:"+str.tostring(price)+"*(1+" +str.tostring(avgWin)+"/100)="+ str.tostring(current_position_stopLoss),style = label.style_label_down,color = #ffeb3b)
+if(shortCondition==false and tradingShort)
+    strategy.close("Short",comment = actionMsg)
+
+
+
